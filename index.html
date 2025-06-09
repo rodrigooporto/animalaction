@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bichos S.A. - Magnata do Mercado v8 (Timer de 1 Minuto)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <script type="module">
+        // Firebase imports
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot, collection, query, getDocs, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- Global Variables ---
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'bichos-sa-default-app';
+        
+        // Use environment's Firebase config if available, otherwise use user-provided as fallback
+        const userFirebaseConfig = { 
+            apiKey: "AIzaSyCFP1RvkOnzvXX2sK7Km5HT_gF3WlmNZYA", 
+            authDomain: "acoesdabicharada.firebaseapp.com", 
+            projectId: "acoesdabicharada" 
+        };
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : userFirebaseConfig;
+
+
+        let app, auth, db, userId;
+        let isAuthReady = false;
+        let unsubscribePlayerState = null;
+        let portfolioChartInstance = null;
+        let individualStockChartInstance = null;
+        
+        // Timer variables
+        let gameTimerInterval = null;
+        const DAY_DURATION = 60; // seconds
+        let timeRemaining = DAY_DURATION;
+        let isGamePaused = true; // Start paused
+        
+        // --- Game Configuration ---
+        const INITIAL_MONEY = 10000;
+        const TRANSACTION_FEE_PERCENT = 0.01;
+        const MAX_SHARES_TRANSACTION = 100;
+
+        const companies = [
+            { id: "ESAL", name: "Esquilo Biscoiteiro S.A.", emoji: "🐿️", basePrice: 50, volatility: 0.2, trend: 0, description: "Líder em biscoitos de nozes gourmet." },
+            { id: "TAVZ", name: "Tartaruga Express Log", emoji: "🐢", basePrice: 70, volatility: 0.15, trend: 0, description: "Transporte lento, mas seguro e confiável." },
+            { id: "ABRA", name: "Apiário Abelha Rainha", emoji: "🐝", basePrice: 60, volatility: 0.25, trend: 0, description: "Produção de mel e derivados de alta qualidade." },
+            { id: "MCES", name: "Macaco CriptoMoedas", emoji: "🐒", basePrice: 100, volatility: 0.4, trend: 0, description: "Especialistas em moedas digitais da selva." },
+            { id: "CRJA", name: "Coruja Consultoria", emoji: "🦉", basePrice: 80, volatility: 0.1, trend: 0, description: "Sabedoria e estratégia para seus investimentos." },
+            { id: "LESA", name: "Leões da Savana S.A.", emoji: "🦁", basePrice: 120, volatility: 0.25, trend: 0, description: "Inovadores em marketing de rugidos personalizados." },
+            { id: "FOOP", name: "Formigas Operárias LTDA", emoji: "🐜", basePrice: 20, volatility: 0.3, trend: 0, description: "Gigantes na logística de micro-cargas de açúcar." },
+            { id: "ELPS", name: "Elefantes Pesados S.A.", emoji: "🐘", basePrice: 150, volatility: 0.1, trend: 0, description: "Construtora de infraestrutura de grande porte." },
+            { id: "BUPR", name: "Burro Professor S.A.", emoji: "🫏", basePrice: 40, volatility: 0.18, trend: 0, description: "Plataforma de E-learning com cursos sobre... tudo." },
+            { id: "RAEN", name: "Rato Encanador LTDA", emoji: "�", basePrice: 35, volatility: 0.12, trend: 0, description: "Soluções rápidas para vazamentos e entupimentos na selva." },
+            { id: "ELEX", name: "Elefante Executivo & Cia", emoji: "🐘", basePrice: 160, volatility: 0.15, trend: 0, description: "Consultoria de gestão para as maiores empresas da selva." },
+            { id: "ARCO", name: "Araras Coloridas LTDA", emoji: "🦜", basePrice: 45, volatility: 0.3, trend: 0, description: "Especialistas em tintas ecológicas e pigmentos naturais." },
+            { id: "JAAQ", name: "Jacarés Aquáticos S.A.", emoji: "🐊", basePrice: 65, volatility: 0.35, trend: 0, description: "Gestão de recursos hídricos e segurança de pântanos." },
+            { id: "ZEFA", name: "Zebra Fashion LTDA", emoji: "🦓", basePrice: 75, volatility: 0.28, trend: 0, description: "Marca de alta costura com foco em padrões listrados." },
+            { id: "PRRX", name: "Preguiças Relax S.A.", emoji: "🦥", basePrice: 30, volatility: 0.05, trend: 0, description: "Fabricantes de redes e produtos para o bem-estar." },
+            { id: "PGGL", name: "Pinguins Gelados LTDA", emoji: "🐧", basePrice: 90, volatility: 0.22, trend: 0, description: "Líder em tecnologia de refrigeração e sorvetes." },
+            { id: "CASA", name: "Cangurus Saltitantes LTDA", emoji: "🦘", basePrice: 55, volatility: 0.33, trend: 0, description: "Fabricante de calçados esportivos com tecnologia de molas." },
+            { id: "RINO", name: "Rinocerontes Blindados S.A.", emoji: "🦏", basePrice: 130, volatility: 0.18, trend: 0, description: "Desenvolvedores de materiais de proteção ecológicos." }
+        ];
+        
+        const achievements = {
+            first_profit: { name: "Primeiro Lucro", emoji: "💰", description: "Faça sua primeira venda com lucro.", unlocked: false },
+            tycoon_starter: { name: "Magnata Iniciante", emoji: "🌱", description: "Alcance uma fortuna de P$ 15.000.", unlocked: false },
+            tycoon_pro: { name: "Magnata Profissional", emoji: "🌳", description: "Alcance uma fortuna de P$ 50.000.", unlocked: false },
+            jungle_king: { name: "Rei da Selva", emoji: "👑", description: "Alcance uma fortuna de P$ 100.000.", unlocked: false },
+            diversifier: { name: "Investidor Diversificado", emoji: "🧺", description: "Possua ações de 5 empresas diferentes ao mesmo tempo.", unlocked: false },
+            diamond_paws: { name: "Patas de Diamante", emoji: "💎", description: "Segure uma ação por 10 dias seguidos.", unlocked: false },
+            speculator: { name: "Especulador Astuto", emoji: "🧐", description: "Compre e venda uma ação no mesmo dia com lucro.", unlocked: false },
+            wise_student: { name: "Aluno da Sábia", emoji: "🎓", description: "Peça 5 dicas para a Coruja Sábia.", unlocked: false }
+        };
+
+        const missions = [
+            { id: "mission_esal", text: "O Esquilo Biscoiteiro precisa de um investimento! Compre 10 ações da ESAL.", type: 'buy', companyId: 'ESAL', target: 10, reward: 200 },
+            { id: "mission_tavz", text: "A Tartaruga Express precisa de capital para novos cascos. Compre 5 ações da TAVZ.", type: 'buy', companyId: 'TAVZ', target: 5, reward: 250 },
+            { id: "mission_abraz", text: "O Apiário Abelha Rainha quer expandir! Ajude comprando 15 ações da ABRA.", type: 'buy', companyId: 'ABRA', target: 15, reward: 300 },
+        ];
+
+        let playerState = {
+            money: INITIAL_MONEY, portfolio: {}, day: 1, highScore: 0, playerName: "Jogador Estreante",
+            wealthHistory: [], achievements: {}, currentMission: null, advisorCalls: 0
+        };
+
+        const marketNews = [ // Abridged for brevity
+            { text: "🐿️ Biscoitos do Esquilo ganham prêmio de sabor!", impact: { ESAL: 0.15 }, type: "positive" },
+            { text: "🐢 Tartaruga Express anuncia nova rota mais rápida! (Boato)", impact: { TAVZ: 0.1 }, type: "rumor-positive" },
+            { text: "🐝 Enxame de abelhas produtoras de mel está super produtivo!", impact: { ABRA: 0.2 }, type: "positive" },
+        ];
+
+        let currentPrices = {};
+        let priceHistory = {};
+
+        const sounds = { // Sound definitions
+            buy: new Tone.Synth({ oscillator: { type: "triangle" }, envelope: { attack: 0.005, decay: 0.1, sustain: 0.05, release: 0.1 } }).toDestination(),
+            sell: new Tone.Synth({ oscillator: { type: "sine" }, envelope: { attack: 0.005, decay: 0.1, sustain: 0.05, release: 0.1 } }).toDestination(),
+            error: new Tone.Synth({ oscillator: { type: "square" }, envelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.2 } }).toDestination(),
+            nextDay: new Tone.Synth({ oscillator: { type: "sawtooth" }, envelope: { attack: 0.01, decay: 0.1, sustain: 0.05, release: 0.1 } }).toDestination(),
+            news: new Tone.NoiseSynth({ noise: { type: 'white' }, envelope: { attack: 0.005, decay: 0.1, release: 0.1 } }).toDestination(),
+            gemini: new Tone.Synth({ oscillator: { type: "sine" }, envelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.2 } }).toDestination(),
+            achievement: new Tone.Synth({ oscillator: { type: "sine" }, envelope: { attack: 0.1, decay: 0.5, sustain: 0.2, release: 0.5 } }).toDestination(),
+            mission: new Tone.Synth({ oscillator: { type: "triangle" }, envelope: { attack: 0.05, decay: 0.3, sustain: 0.1, release: 0.3 } }).toDestination(),
+        };
+
+        async function initializeFirebase() { // Firebase setup
+            try {
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                setLogLevel('debug');
+                await setPersistence(auth, browserLocalPersistence);
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        isAuthReady = true;
+                        await loadPlayerState();
+                        initializeGame(); 
+                    } else {
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await signInWithCustomToken(auth, __initial_auth_token);
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    }
+                });
+            } catch (error) {
+                console.error("Firebase initialization error:", error);
+                isAuthReady = false;
+                initializeGame();
+            }
+        }
+
+        async function savePlayerState() { // Save state to Firestore or localStorage
+            if (!isAuthReady || !userId || !db) {
+                localStorage.setItem('bichos_sa_playerState_local', JSON.stringify(playerState));
+                return;
+            }
+            try {
+                const playerDocRef = doc(db, `artifacts/${appId}/users/${userId}/playerProfiles`, "gameState");
+                await setDoc(playerDocRef, playerState);
+            } catch (error) {
+                localStorage.setItem('bichos_sa_playerState_local', JSON.stringify(playerState));
+            }
+        }
+        
+        async function updatePublicProfile(name, score) {
+            if (!isAuthReady || !userId || !db) return;
+            const publicProfileRef = doc(db, `artifacts/${appId}/public/data/leaderboard`, userId);
+            try {
+                await setDoc(publicProfileRef, { playerName: name, highScore: score }, { merge: true });
+                console.log("Public profile updated for leaderboard.");
+            } catch (error) {
+                console.error("Error updating public profile:", error);
+            }
+        }
+
+        async function loadPlayerState() { // Load state from Firestore or localStorage
+            if (!isAuthReady || !userId || !db) {
+                const localState = localStorage.getItem('bichos_sa_playerState_local');
+                if (localState) playerState = JSON.parse(localState);
+                return;
+            }
+            if (unsubscribePlayerState) unsubscribePlayerState();
+            try {
+                const playerDocRef = doc(db, `artifacts/${appId}/users/${userId}/playerProfiles`, "gameState");
+                unsubscribePlayerState = onSnapshot(playerDocRef, async (docSnap) => {
+                    if (docSnap.exists()) {
+                        const loadedData = docSnap.data();
+                        if (loadedData && typeof loadedData.money === 'number') {
+                            playerState = loadedData;
+                            if (!playerState.wealthHistory) playerState.wealthHistory = [{day: 0, wealth: INITIAL_MONEY}];
+                            if (!playerState.achievements) playerState.achievements = {};
+                            if (!playerState.advisorCalls) playerState.advisorCalls = 0;
+                        } else {
+                            await resetGameProgress();
+                        }
+                    } else {
+                        playerState.playerName = `Jogador-${userId.substring(0,5)}`;
+                        await savePlayerState();
+                        await updatePublicProfile(playerState.playerName, playerState.highScore);
+                    }
+                    updateUI();
+                });
+            } catch (error) {
+                const localState = localStorage.getItem('bichos_sa_playerState_local');
+                if (localState) playerState = JSON.parse(localState);
+                updateUI();
+            }
+        }
+        
+        async function getAdvisorTip() { // Gemini Advisor
+            pauseGame();
+            const advisorModal = document.getElementById('advisorModal');
+            const advisorResponseEl = document.getElementById('advisorResponse');
+            const advisorSpinner = document.getElementById('advisorSpinner');
+            advisorResponseEl.innerHTML = '';
+            advisorSpinner.classList.remove('hidden');
+            advisorModal.classList.remove('hidden');
+            sounds.gemini.triggerAttackRelease("C5", "8n");
+            playerState.advisorCalls = (playerState.advisorCalls || 0) + 1;
+            checkAchievements();
+            let portfolioString = Object.entries(playerState.portfolio).filter(([, qty]) => qty > 0).map(([id, qty]) => `${qty} ações de ${companies.find(c => c.id === id).name}`).join(', ') || "Nenhuma ação.";
+            const prompt = `Você é a Coruja Sábia, uma conselheira financeira no jogo "Bichos S.A.". Situação do jogador: Dinheiro: P$ ${playerState.money.toFixed(2)}; Portfólio: ${portfolioString}; Dia: ${playerState.day}. Dê uma dica curta, divertida e temática de investimento. Assine como "Hoot hoot! - Coruja Sábia".`;
+            try {
+                const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
+                const apiKey = ""; 
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+                const response = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                if (!response.ok) throw new Error(`API Error: ${response.statusText}`);
+                const result = await response.json();
+                if (result.candidates?.[0]?.content?.parts?.[0]) {
+                    advisorResponseEl.textContent = result.candidates[0].content.parts[0].text;
+                } else { throw new Error("Resposta da API inválida."); }
+            } catch (error) {
+                advisorResponseEl.textContent = "Hooo... minha bola de cristal está embaçada agora.";
+            } finally {
+                advisorSpinner.classList.add('hidden');
+            }
+        }
+
+        async function generateCreativeNews() { // Gemini News
+            pauseGame();
+            const button = document.getElementById('generateNewsButton');
+            button.disabled = true;
+            button.innerHTML = `<svg class="animate-spin h-5 w-5" viewBox="0 0 24 24"><path fill="currentColor" d="M12,4V2A10,10 0 0,0 2,12H4A8,8 0 0,1 12,4Z"></path></svg>`;
+            const companyIds = companies.map(c => c.id);
+            const prompt = `Você é um jornalista para o jogo "Bichos S.A.". Crie uma manchete curta e divertida sobre uma das empresas: ${companyIds.join(', ')}. Responda em JSON: {"headline": "sua manchete", "companyId": "ID_EMPRESA", "impact": numero_entre_-0.4_e_0.4}.`;
+            try {
+                 const payload = {
+                    contents: [{ role: "user", parts: [{ text: prompt }] }],
+                    generationConfig: {
+                        responseMimeType: "application/json",
+                        responseSchema: { type: "OBJECT", properties: { "headline": { "type": "STRING" }, "companyId": { "type": "STRING", "enum": companyIds }, "impact": { "type": "NUMBER" } }, required: ["headline", "companyId", "impact"] }
+                    }
+                };
+                const apiKey = "";
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+                const response = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                if (!response.ok) throw new Error(`API Error: ${response.statusText}`);
+                const result = await response.json();
+                if (result.candidates?.[0]?.content?.parts?.[0]) {
+                    const newsData = JSON.parse(result.candidates[0].content.parts[0].text);
+                    const company = companies.find(c => c.id === newsData.companyId);
+                    if (!company) throw new Error(`Empresa da IA (${newsData.companyId}) não encontrada.`);
+                    const newNewsItem = { text: `${company.emoji} ${newsData.headline}`, impact: { [newsData.companyId]: newsData.impact }, type: newsData.impact > 0 ? "positive" : "negative" };
+                    marketNews.unshift(newNewsItem);
+                    addNewsEntry(newNewsItem.text, `gemini-${newNewsItem.type}`);
+                    showMessage("Notícia de última hora da IA adicionada ao mercado!");
+                } else { throw new Error("Resposta da API inválida."); }
+            } catch (error) { showMessage("A gráfica da selva está com problemas."); } 
+            finally { button.disabled = false; button.innerHTML = `✨`; resumeGame(); }
+        }
+
+        function initializeCompanies() {
+            companies.forEach(company => {
+                currentPrices[company.id] = company.basePrice;
+                priceHistory[company.id] = [company.basePrice];
+                if (playerState.portfolio[company.id] === undefined) playerState.portfolio[company.id] = 0;
+            });
+        }
+
+        function updateMarket() {
+            const newsItem = marketNews[Math.floor(Math.random() * marketNews.length)];
+            addNewsEntry(newsItem.text, newsItem.type);
+            sounds.news.triggerAttackRelease("8n");
+            let globalVolatilityMultiplier = newsItem.volatility_spike || 1.0;
+            companies.forEach(company => {
+                let priceChangeFactor = 1.0 + (Math.random() - 0.5) * company.volatility * globalVolatilityMultiplier + company.trend * 0.01 * Math.random();
+                if (newsItem.impact?.[company.id]) priceChangeFactor += newsItem.impact[company.id];
+                if (newsItem.impact_all) priceChangeFactor += newsItem.impact_all;
+                const history = priceHistory[company.id];
+                if (history.length >= 2) {
+                    if (currentPrices[company.id] > history[history.length - 2]) company.trend = Math.min(5, company.trend + 0.5);
+                    else if (currentPrices[company.id] < history[history.length - 2]) company.trend = Math.max(-5, company.trend - 0.5);
+                    else company.trend *= 0.8;
+                }
+                currentPrices[company.id] = Math.max(5, Math.round(currentPrices[company.id] * priceChangeFactor * 100) / 100);
+                priceHistory[company.id].push(currentPrices[company.id]);
+                if (priceHistory[company.id].length > 30) priceHistory[company.id].shift();
+            });
+        }
+        
+        function calculateTotalWealth() { return playerState.money + calculatePortfolioValue(); }
+
+        function buyShares(companyId, quantity) {
+            const price = currentPrices[companyId];
+            const totalCost = price * quantity * (1 + TRANSACTION_FEE_PERCENT);
+            if (playerState.money >= totalCost) {
+                playerState.money -= totalCost;
+                playerState.portfolio[companyId] = (playerState.portfolio[companyId] || 0) + quantity;
+                sounds.buy.triggerAttackRelease("C4", "8n");
+                addNewsEntry(`Você comprou ${quantity} ações de ${companies.find(c=>c.id===companyId).name}.`, "trade");
+                checkMissionProgress('buy', companyId, quantity);
+                checkAchievements();
+                updateUI();
+                savePlayerState();
+            } else { showMessage("Dinheiro insuficiente!"); sounds.error.triggerAttackRelease("A3", "4n"); }
+        }
+
+        function sellShares(companyId, quantity) {
+             const price = currentPrices[companyId];
+             const totalEarnings = price * quantity * (1 - TRANSACTION_FEE_PERCENT);
+             playerState.money += totalEarnings;
+             playerState.portfolio[companyId] -= quantity;
+             sounds.sell.triggerAttackRelease("G4", "8n");
+             addNewsEntry(`Você vendeu ${quantity} ações de ${companies.find(c=>c.id === companyId).name}.`, "trade");
+             const lastPrice = priceHistory[companyId]?.[priceHistory[companyId].length - 2] || price;
+             if(price > lastPrice ) unlockAchievement('first_profit');
+             checkAchievements();
+             updateUI();
+             savePlayerState();
+        }
+
+        function nextDay() {
+            playerState.day++;
+            updateMarket();
+            sounds.nextDay.triggerAttackRelease("E4", "8n");
+            if (playerState.day % 5 === 1 && !playerState.currentMission) assignNewMission();
+            checkAchievements();
+            if(!playerState.wealthHistory) playerState.wealthHistory = [];
+            playerState.wealthHistory.push({ day: playerState.day, wealth: calculateTotalWealth() });
+            updateUI();
+            savePlayerState();
+        }
+        
+        function calculatePortfolioValue() {
+            return Object.entries(playerState.portfolio).reduce((total, [id, qty]) => total + qty * (currentPrices[id] || 0), 0);
+        }
+
+        function unlockAchievement(id) {
+            if (!playerState.achievements[id]) {
+                playerState.achievements[id] = true;
+                const achievement = achievements[id];
+                showMessage(`🏆 Conquista: ${achievement.name}!`);
+                sounds.achievement.triggerAttackRelease("C5", "1n");
+                updateAchievementsUI();
+            }
+        }
+
+        function checkAchievements() {
+            const totalWealth = calculateTotalWealth();
+            if (totalWealth >= 15000) unlockAchievement('tycoon_starter');
+            if (totalWealth >= 50000) unlockAchievement('tycoon_pro');
+            if (totalWealth >= 100000) unlockAchievement('jungle_king');
+            if (Object.values(playerState.portfolio).filter(q => q > 0).length >= 5) unlockAchievement('diversifier');
+            if (playerState.advisorCalls >= 5) unlockAchievement('wise_student');
+            if (totalWealth > playerState.highScore) {
+                playerState.highScore = Math.round(totalWealth);
+                addNewsEntry(`🎉 Novo Recorde! Fortuna de P$${playerState.highScore.toFixed(2)}!`, "achievement");
+                updatePublicProfile(playerState.playerName, playerState.highScore);
+            }
+        }
+        
+        function assignNewMission() {
+            const possibleMissions = missions.filter(m => (playerState.portfolio[m.companyId] || 0) < m.target * 2);
+            const missionPool = possibleMissions.length > 0 ? possibleMissions : missions;
+            const newMission = missionPool[Math.floor(Math.random() * missionPool.length)];
+            playerState.currentMission = { ...newMission, progress: 0 };
+            sounds.mission.triggerAttackRelease("E5", "4n");
+            addNewsEntry(`🎯 Nova Missão! ${newMission.text}`, 'achievement');
+            updateMissionUI();
+        }
+        
+        function checkMissionProgress(actionType, companyId, quantity) {
+            const mission = playerState.currentMission;
+            if (mission && !mission.completed && mission.type === actionType && mission.companyId === companyId) {
+                mission.progress = (mission.progress || 0) + quantity;
+                if (mission.progress >= mission.target) {
+                    mission.completed = true;
+                    playerState.money += mission.reward;
+                    showMessage(`✅ Missão Cumprida! Você ganhou P$ ${mission.reward.toFixed(2)}!`);
+                    sounds.achievement.triggerAttackRelease("G5", "1n");
+                    playerState.currentMission = null;
+                }
+                updateMissionUI();
+            }
+        }
+
+        function updateUI() {
+            const moneyEl = document.getElementById('money');
+            if (!moneyEl) return;
+            document.getElementById('money').textContent = `P$ ${playerState.money.toFixed(2)}`;
+            document.getElementById('day').textContent = playerState.day;
+            document.getElementById('playerNameDisplay').textContent = playerState.playerName;
+            document.getElementById('highScore').textContent = `P$ ${playerState.highScore.toFixed(2)}`;
+            document.getElementById('totalPortfolioValue').textContent = `P$ ${calculatePortfolioValue().toFixed(2)}`;
+            document.getElementById('grandTotalValue').textContent = `P$ ${calculateTotalWealth().toFixed(2)}`;
+            renderStocks();
+            updatePortfolioChart();
+            updateMissionUI();
+            updateAchievementsUI();
+        }
+
+        function renderStocks() {
+            const stocksContainer = document.getElementById('stocksContainer');
+            stocksContainer.innerHTML = '';
+            companies.forEach(company => {
+                const price = currentPrices[company.id];
+                const prevPrice = priceHistory[company.id]?.[priceHistory[company.id].length - 2] || price;
+                const change = price - prevPrice;
+                const changePercent = prevPrice !== 0 ? (change / prevPrice) * 100 : 0;
+                const color = change >= 0 ? 'text-green-500' : 'text-red-500';
+                const arrow = change >= 0 ? '▲' : '▼';
+                const quantityOwned = playerState.portfolio[company.id] || 0;
+                const stockDiv = document.createElement('div');
+                stockDiv.className = 'p-4 border border-gray-700 rounded-lg bg-gray-800 shadow-md cursor-pointer hover:border-blue-500 transition-all';
+                stockDiv.dataset.companyId = company.id;
+                stockDiv.innerHTML = `
+                    <div class="flex items-center justify-between mb-2">
+                        <h3 class="text-xl font-semibold">${company.emoji} ${company.name} (${company.id})</h3>
+                        <div class="text-right"><p class="text-2xl font-bold">P$ ${price.toFixed(2)}</p><p class="${color} text-sm">${arrow} ${change.toFixed(2)} (${changePercent.toFixed(2)}%)</p></div>
+                    </div>
+                    <p class="text-sm text-gray-400 mb-3">${company.description}</p>
+                    <div class="my-3 p-2 bg-gray-700/50 rounded-md border border-gray-600"><p>Você possui: <span class="font-bold text-yellow-400">${quantityOwned}</span> ações</p><p>Valor: <span class="font-bold">P$ ${(quantityOwned * price).toFixed(2)}</span></p></div>
+                    <div class="flex space-x-2 items-center">
+                        <input type="number" id="qty-input-${company.id}" class="w-20 p-2 border border-gray-600 rounded-md bg-gray-700 text-white focus:ring-2 focus:ring-blue-500" value="1" min="1" max="${MAX_SHARES_TRANSACTION}">
+                        <button data-action="buy" data-id="${company.id}" class="flex-1 bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-4 rounded-md">Comprar</button>
+                        ${quantityOwned > 0 ? `<button data-action="sell" data-id="${company.id}" class="flex-1 bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-4 rounded-md">Vender</button>` : ''}
+                    </div>`;
+                stocksContainer.appendChild(stockDiv);
+            });
+        }
+        
+        function updateIndividualStockChart(companyId) {
+            const company = companies.find(c => c.id === companyId);
+            if (!company) return;
+
+            document.getElementById('individualChartContainer').classList.remove('hidden');
+            document.getElementById('individualChartTitle').innerHTML = `${company.emoji} Histórico de Preços: ${company.name}`;
+            
+            const ctx = document.getElementById('individualStockChart').getContext('2d');
+            const history = priceHistory[companyId] || [];
+            const labels = history.map((_, i) => `T-${history.length - i -1}`);
+
+            if (individualStockChartInstance) {
+                individualStockChartInstance.data.labels = labels;
+                individualStockChartInstance.data.datasets[0].data = history;
+                individualStockChartInstance.data.datasets[0].label = `Preço de ${company.id}`;
+                individualStockChartInstance.data.datasets[0].borderColor = `rgba(${Math.random()*255}, ${Math.random()*255}, ${Math.random()*255}, 1)`;
+                individualStockChartInstance.data.datasets[0].backgroundColor = `rgba(${Math.random()*255}, ${Math.random()*255}, ${Math.random()*255}, 0.2)`;
+                individualStockChartInstance.update();
+            } else {
+                individualStockChartInstance = new Chart(ctx, {
+                    type: 'line', data: { labels, datasets: [{ label: `Preço de ${company.id}`, data: history, backgroundColor: 'rgba(168, 85, 247, 0.2)', borderColor: 'rgba(168, 85, 247, 1)', borderWidth: 2, tension: 0.1, fill: true }] },
+                    options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: false, ticks: { color: '#9ca3af' }, grid: { color: '#374151' } }, x: { ticks: { color: '#9ca3af' }, grid: { color: '#374151' } } }, plugins: { legend: { labels: { color: '#e5e7eb' } } } }
+                });
+            }
+        }
+
+        function updatePortfolioChart() {
+            if (!playerState.wealthHistory) return;
+            const ctx = document.getElementById('portfolioChart').getContext('2d');
+            if (!ctx) return;
+            const labels = playerState.wealthHistory.map(h => `Dia ${h.day}`);
+            const data = playerState.wealthHistory.map(h => h.wealth);
+
+            if (portfolioChartInstance) {
+                portfolioChartInstance.data.labels = labels;
+                portfolioChartInstance.data.datasets[0].data = data;
+                portfolioChartInstance.update();
+            } else {
+                portfolioChartInstance = new Chart(ctx, { type: 'line', data: { labels, datasets: [{ label: 'Evolução da Fortuna', data, backgroundColor: 'rgba(59, 130, 246, 0.2)', borderColor: 'rgba(59, 130, 246, 1)', borderWidth: 2, tension: 0.1, fill: true }] }, options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: false, ticks: { color: '#9ca3af' }, grid: { color: '#374151' } }, x: { ticks: { color: '#9ca3af' }, grid: { color: '#374151' } } }, plugins: { legend: { labels: { color: '#e5e7eb' } } } } });
+            }
+        }
+        
+        function updateAchievementsUI() {
+            const container = document.getElementById('achievementsContainer');
+            if (!container) return;
+            container.innerHTML = Object.entries(achievements).map(([id, ach]) => {
+                const isUnlocked = playerState.achievements[id];
+                return `<div class="p-3 rounded-lg flex items-center transition-all ${isUnlocked ? 'bg-yellow-500/20 border-yellow-500' : 'bg-gray-700/50 border-gray-600 opacity-60'}"><span class="text-4xl mr-4">${ach.emoji}</span><div><h4 class="font-bold ${isUnlocked ? 'text-yellow-400' : ''}">${ach.name}</h4><p class="text-sm ${isUnlocked ? '' : 'text-gray-400'}">${ach.description}</p></div></div>`;
+            }).join('');
+        }
+        
+        function updateMissionUI() {
+            const container = document.getElementById('missionContainer');
+            const mission = playerState.currentMission;
+            if (mission && !mission.completed) {
+                const progressPercent = Math.min(100, ((mission.progress || 0) / mission.target) * 100);
+                container.innerHTML = `<h3 class="text-xl font-semibold mb-2">Missão Atual</h3><p class="text-gray-300 mb-2">${mission.text}</p><div class="w-full bg-gray-700 rounded-full h-2.5"><div class="bg-blue-600 h-2.5 rounded-full" style="width: ${progressPercent}%"></div></div><p class="text-right text-sm text-gray-400 mt-1">${mission.progress || 0} / ${mission.target}</p><p class="mt-2">Recompensa: <span class="font-bold text-green-400">P$ ${mission.reward.toFixed(2)}</span></p>`;
+                container.classList.remove('hidden');
+            } else if (container) {
+                container.classList.add('hidden');
+            }
+        }
+
+        function addNewsEntry(text, type = "neutral") {
+            const newsFeed = document.getElementById('newsFeed');
+            const entry = document.createElement('div');
+            let typeClass = 'news-item-neutral', icon = "📰";
+            if (type.includes("positive")) { typeClass = "news-item-positive"; icon = "📈"; }
+            if (type.includes("negative")) { typeClass = "news-item-negative"; icon = "📉"; }
+            if (type.includes("rumor")) { typeClass = "news-item-rumor"; icon = "❓"; }
+            if (type.includes("trade")) { typeClass = "news-item-trade"; icon = "💸"; }
+            if (type.includes("achievement")) { typeClass = "news-item-achievement"; icon = "🏆"; }
+            if (type.includes("gemini")) icon = "✨";
+            entry.className = `p-2 mb-2 border-b border-gray-700 ${typeClass}`;
+            entry.innerHTML = `<span class="font-semibold">${icon} Dia ${playerState.day}:</span> ${text}`;
+            newsFeed.prepend(entry);
+            if (newsFeed.children.length > 100) newsFeed.removeChild(newsFeed.lastChild);
+        }
+
+        function showMessage(text) {
+            document.getElementById('messageText').textContent = text;
+            document.getElementById('messageBox').classList.remove('hidden');
+        }
+
+        function initializeGame() {
+            document.getElementById('loadingOverlay').classList.add('hidden');
+            initializeCompanies();
+            if (playerState.day === 1 && (!playerState.wealthHistory || playerState.wealthHistory.length <= 1)) {
+                 if (!playerState.initialMarketUpdated) {
+                    updateMarket();
+                    playerState.wealthHistory = [{ day: 1, wealth: calculateTotalWealth() }];
+                    playerState.initialMarketUpdated = true;
+                }
+            }
+            updateUI();
+            addNewsEntry("Bem-vindo ao Bichos S.A.! O mercado está mais selvagem do que nunca!", "neutral");
+            resumeGame();
+        }
+        
+        async function resetGameProgress() {
+            pauseGame();
+            const oldHighScore = playerState.highScore;
+            const oldPlayerName = playerState.playerName;
+            
+            if (portfolioChartInstance) { portfolioChartInstance.destroy(); portfolioChartInstance = null; }
+            if (individualStockChartInstance) { individualStockChartInstance.destroy(); individualStockChartInstance = null; }
+            
+            document.getElementById('individualChartContainer').classList.add('hidden');
+
+            playerState = { 
+                money: INITIAL_MONEY, portfolio: {}, day: 1, highScore: oldHighScore, playerName: oldPlayerName, 
+                wealthHistory: [], achievements: {}, currentMission: null, advisorCalls: 0, initialMarketUpdated: false 
+            };
+            currentPrices = {}; priceHistory = {};
+            
+            initializeCompanies();
+            updateMarket();
+            
+            playerState.wealthHistory.push({ day: 1, wealth: calculateTotalWealth() });
+            
+            addNewsEntry("O jogo foi reiniciado! Boa sorte na sua nova jornada!", "neutral");
+            await savePlayerState();
+            await updatePublicProfile(playerState.playerName, playerState.highScore);
+            updateUI();
+            showMessage("Jogo reiniciado! Seu recorde e nome foram mantidos.");
+            resumeGame();
+        }
+
+        // --- Timer Functions ---
+        function pauseGame() {
+            if (gameTimerInterval) {
+                clearInterval(gameTimerInterval);
+                gameTimerInterval = null;
+            }
+            isGamePaused = true;
+            document.getElementById('pausePlayIcon').innerHTML = '▶️'; // Play icon
+        }
+
+        function resumeGame() {
+            if (!gameTimerInterval) { // Prevent multiple intervals
+                isGamePaused = false;
+                document.getElementById('pausePlayIcon').innerHTML = '⏸️'; // Pause icon
+                gameTimerInterval = setInterval(gameLoop, 1000);
+            }
+        }
+        
+        function togglePause() {
+            if (isGamePaused) {
+                resumeGame();
+            } else {
+                pauseGame();
+            }
+        }
+
+        function gameLoop() {
+            if (isGamePaused) return;
+            timeRemaining--;
+            const timerBar = document.getElementById('timerBar');
+            if (timerBar) {
+                timerBar.style.width = `${(timeRemaining / DAY_DURATION) * 100}%`;
+            }
+
+            if (timeRemaining <= 0) {
+                nextDay();
+                timeRemaining = DAY_DURATION;
+            }
+        }
+
+        async function showLeaderboard() {
+            pauseGame();
+            const leaderboardBody = document.getElementById('leaderboardBody');
+            leaderboardBody.innerHTML = '<tr><td colspan="3" class="text-center p-4">Carregando ranking...</td></tr>';
+            document.getElementById('leaderboardModal').classList.remove('hidden');
+
+            try {
+                const q = query(collection(db, `artifacts/${appId}/public/data/leaderboard`));
+                const querySnapshot = await getDocs(q);
+                const players = [];
+                querySnapshot.forEach((doc) => {
+                    players.push(doc.data());
+                });
+
+                players.sort((a, b) => b.highScore - a.highScore);
+
+                leaderboardBody.innerHTML = players.slice(0, 20).map((player, index) => `
+                    <tr class="border-b border-gray-700 hover:bg-gray-700">
+                        <td class="p-3 text-center">${index + 1}</td>
+                        <td class="p-3">${player.playerName || 'Jogador Anônimo'}</td>
+                        <td class="p-3 text-right font-semibold text-yellow-400">P$ ${player.highScore?.toFixed(2) || '0.00'}</td>
+                    </tr>
+                `).join('');
+            } catch (error) {
+                console.error("Error fetching leaderboard:", error);
+                leaderboardBody.innerHTML = '<tr><td colspan="3" class="text-center p-4 text-red-500">Erro ao carregar o ranking.</td></tr>';
+            }
+        }
+
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            await initializeFirebase();
+            document.getElementById('pausePlayButton').addEventListener('click', togglePause);
+            document.getElementById('rankingButton').addEventListener('click', showLeaderboard);
+            document.getElementById('closeLeaderboardButton').addEventListener('click', () => {
+                document.getElementById('leaderboardModal').classList.add('hidden');
+                resumeGame();
+            });
+            document.getElementById('resetGameButton').addEventListener('click', () => showConfirm("Tem certeza que quer reiniciar o jogo?", resetGameProgress));
+            document.getElementById('achievementsButton').addEventListener('click', () => {
+                pauseGame();
+                document.getElementById('achievementsModal').classList.remove('hidden');
+            });
+            document.getElementById('closeAchievementsButton').addEventListener('click', () => {
+                document.getElementById('achievementsModal').classList.add('hidden');
+                resumeGame();
+            });
+            document.getElementById('advisorButton').addEventListener('click', getAdvisorTip);
+            document.getElementById('generateNewsButton').addEventListener('click', generateCreativeNews);
+            document.getElementById('closeAdvisorButton').addEventListener('click', () => {
+                document.getElementById('advisorModal').classList.add('hidden');
+                resumeGame();
+            });
+            
+            document.getElementById('stocksContainer').addEventListener('click', (e) => {
+                const button = e.target.closest('button[data-action]');
+                const stockCard = e.target.closest('div[data-company-id]');
+                if (button && stockCard) {
+                    e.stopPropagation(); 
+                    const action = button.dataset.action;
+                    const companyId = button.dataset.id;
+                    const quantityInput = document.getElementById(`qty-input-${companyId}`);
+                    const quantity = parseInt(quantityInput.value, 10);
+                    
+                    if (action === 'buy') {
+                        if (quantity > 0 && quantity <= MAX_SHARES_TRANSACTION) buyShares(companyId, quantity);
+                        else showMessage(`Quantidade inválida: 1 a ${MAX_SHARES_TRANSACTION}.`);
+                    } else if (action === 'sell') {
+                        if (quantity > 0 && quantity <= (playerState.portfolio[companyId] || 0) ) sellShares(companyId, quantity);
+                        else showMessage(`Quantidade inválida: 1 a ${playerState.portfolio[companyId] || 0}.`);
+                    }
+                } else if (stockCard) {
+                    updateIndividualStockChart(stockCard.dataset.companyId);
+                }
+            });
+
+            document.getElementById('messageOkButton').addEventListener('click', () => document.getElementById('messageBox').classList.add('hidden'));
+            document.getElementById('changeNameButton').addEventListener('click', () => {
+                pauseGame();
+                document.getElementById('nameInputModal').classList.remove('hidden')
+            });
+            document.getElementById('saveNameButton').addEventListener('click', async () => {
+                const newName = document.getElementById('newNameInput').value.trim();
+                if (newName && newName.length > 2 && newName.length < 20) {
+                    playerState.playerName = newName;
+                    document.getElementById('nameInputModal').classList.add('hidden');
+                    updateUI();
+                    await savePlayerState();
+                    await updatePublicProfile(playerState.playerName, playerState.highScore);
+                    showMessage("Nome alterado com sucesso!");
+                    resumeGame();
+                } else { showMessage("Nome inválido. Deve ter entre 3 e 20 caracteres."); }
+            });
+            document.getElementById('cancelNameButton').addEventListener('click', () => {
+                 document.getElementById('nameInputModal').classList.add('hidden');
+                 resumeGame();
+            });
+            
+            window.showConfirm = (text, callback) => {
+                pauseGame();
+                document.getElementById('confirmText').textContent = text;
+                document.getElementById('confirmBox').classList.remove('hidden');
+                
+                const confirmYesButton = document.getElementById('confirmYesButton');
+                const confirmNoButton = document.getElementById('confirmNoButton');
+
+                const yesHandler = () => {
+                    if (callback) callback();
+                    cleanup();
+                };
+
+                const noHandler = () => {
+                    cleanup();
+                    resumeGame();
+                };
+
+                const cleanup = () => {
+                    document.getElementById('confirmBox').classList.add('hidden');
+                    confirmYesButton.removeEventListener('click', yesHandler);
+                    confirmNoButton.removeEventListener('click', noHandler);
+                };
+
+                confirmYesButton.addEventListener('click', yesHandler, { once: true });
+                confirmNoButton.addEventListener('click', noHandler, { once: true });
+            };
+        });
+    </script>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #111827; color: #e5e7eb; }
+        .modal-overlay { background-color: rgba(0,0,0,0.75); }
+        #newsFeed::-webkit-scrollbar, #stocksContainer::-webkit-scrollbar, #achievementsContainer::-webkit-scrollbar, #leaderboardBody::-webkit-scrollbar { width: 8px; }
+        #newsFeed::-webkit-scrollbar-track, #stocksContainer::-webkit-scrollbar-track, #achievementsContainer::-webkit-scrollbar-track, #leaderboardBody::-webkit-scrollbar-track { background: #1f2937; border-radius: 10px; }
+        #newsFeed::-webkit-scrollbar-thumb, #stocksContainer::-webkit-scrollbar-thumb, #achievementsContainer::-webkit-scrollbar-thumb, #leaderboardBody::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 10px; }
+        .stat-card { background-color: #1f2937; }
+        .news-item-positive { border-left: 4px solid #22c55e; background-color: rgba(34, 197, 94, 0.1); }
+        .news-item-negative { border-left: 4px solid #ef4444; background-color: rgba(239, 68, 68, 0.1); }
+        .news-item-neutral { border-left: 4px solid #60a5fa; background-color: rgba(96, 165, 250, 0.1); }
+        .news-item-rumor { border-left: 4px solid #eab308; background-color: rgba(234, 179, 8, 0.1); }
+        .news-item-trade { border-left: 4px solid #8b5cf6; background-color: rgba(139, 92, 246, 0.1); }
+        .news-item-achievement { border-left: 4px solid #f59e0b; background-color: rgba(245, 158, 11, 0.1); }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center p-2 sm:p-4 selection:bg-blue-500 selection:text-white">
+    <div id="loadingOverlay" class="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50"><div class="text-white text-xl animate-pulse">Carregando Bichos S.A....</div></div>
+    <div class="w-full max-w-7xl mx-auto p-2 sm:p-6 bg-gray-900 rounded-xl shadow-2xl">
+        <header class="mb-4 pb-4 border-b border-gray-700">
+            <div class="flex justify-center items-center gap-x-4 mb-4">
+                <span class="text-5xl sm:text-6xl" role="img" aria-label="Mascote de Camaleão">🦎</span>
+                <h1 class="text-3xl md:text-4xl font-bold text-center text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500">Bichos S.A. - Magnata do Mercado</h1>
+            </div>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-4 text-center">
+                <div class="stat-card p-3 rounded-lg"><p class="text-sm text-gray-400">Jogador</p><p id="playerNameDisplay" class="text-lg font-semibold text-blue-400">...</p></div>
+                <div class="stat-card p-3 rounded-lg"><p class="text-sm text-gray-400">Dinheiro</p><p id="money" class="text-lg font-semibold text-green-400">P$ 0.00</p></div>
+                <div class="stat-card p-3 rounded-lg"><p class="text-sm text-gray-400">Dia</p><p id="day" class="text-lg font-semibold">1</p></div>
+                <div class="stat-card p-3 rounded-lg"><p class="text-sm text-gray-400">Recorde</p><p id="highScore" class="text-lg font-semibold text-yellow-400">P$ 0.00</p></div>
+            </div>
+             <div class="mt-4 flex justify-center flex-wrap gap-2 sm:gap-4">
+                <button id="pausePlayButton" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg shadow-md transition text-sm sm:text-base"><span id="pausePlayIcon">▶️</span></button>
+                <button id="rankingButton" class="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg shadow-md transition text-sm sm:text-base">Ranking 🏅</button>
+                <button id="achievementsButton" class="bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-3 px-6 rounded-lg shadow-md transition text-sm sm:text-base">Conquistas 🏆</button>
+                <button id="changeNameButton" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-lg shadow-md transition text-sm sm:text-base">Mudar Nome ✏️</button>
+                <button id="resetGameButton" class="bg-red-700 hover:bg-red-800 text-white font-bold py-3 px-6 rounded-lg shadow-md transition text-sm sm:text-base">Reiniciar Jogo 🔄</button>
+            </div>
+            <div class="mt-4 w-full bg-gray-700 rounded-full h-2.5">
+                <div id="timerBar" class="bg-blue-500 h-2.5 rounded-full transition-all duration-1000 linear" style="width: 100%"></div>
+            </div>
+        </header>
+
+        <section class="mb-6 grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div class="md:col-span-3 bg-gray-800 p-4 rounded-lg hidden" id="missionContainer"></div>
+            <div class="md:col-span-1 bg-gray-800 p-4 rounded-lg">
+                <div class="flex justify-between items-center mb-2"><h3 class="text-xl font-semibold text-green-300">Minha Fortuna</h3><button id="advisorButton" title="Pedir dica para a Coruja Sábia (IA)" class="bg-yellow-600 hover:bg-yellow-700 text-white font-bold p-2 rounded-full shadow-md transition text-xl">🦉</button></div>
+                <div class="mt-3 pt-3"><p>Valor em Carteira: <span id="totalPortfolioValue" class="font-bold text-yellow-400">P$ 0.00</span></p><p>Fortuna Total: <span id="grandTotalValue" class="font-bold text-lg text-yellow-300">P$ 0.00</span></p></div>
+            </div>
+            <div class="md:col-span-2 bg-gray-800 p-4 rounded-lg" style="height: 250px;"><canvas id="portfolioChart"></canvas></div>
+        </section>
+
+        <main class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <section class="lg:col-span-2">
+                <div class="mb-6">
+                    <h2 class="text-2xl font-semibold mb-4 text-blue-300">Empresas da Bicharada (Clique para ver o gráfico)</h2>
+                    <div id="stocksContainer" class="space-y-4 max-h-[50vh] overflow-y-auto pr-2"></div>
+                </div>
+                <div id="individualChartContainer" class="bg-gray-800 p-4 rounded-lg hidden">
+                     <h2 id="individualChartTitle" class="text-xl font-semibold mb-3 text-purple-400">Histórico da Ação</h2>
+                     <div class="h-64"><canvas id="individualStockChart"></canvas></div>
+                </div>
+            </section>
+            <section class="lg:col-span-1">
+                <div class="flex justify-between items-center mb-3"><h2 class="text-2xl font-semibold text-yellow-300">Notícias 📰</h2><button id="generateNewsButton" title="Usa a Gemini IA para criar uma notícia" class="bg-teal-600 hover:bg-teal-700 text-white font-bold py-2 px-2 rounded-lg shadow-md transition text-xl flex items-center">✨</button></div>
+                <div id="newsFeed" class="h-96 lg:h-[calc(100vh - 25rem)] overflow-y-auto p-3 bg-gray-800 rounded-lg shadow-inner border border-gray-700"></div>
+            </section>
+        </main>
+        
+        <footer class="mt-8 pt-4 border-t border-gray-700 text-center"><p class="text-sm text-gray-500">Bichos S.A. &copy; 2024-2025. Aprenda brincando!</p></footer>
+    </div>
+    <!-- Modals -->
+    <div id="leaderboardModal" class="fixed inset-0 modal-overlay flex items-center justify-center p-4 z-40 hidden"><div class="bg-gray-800 p-6 rounded-lg shadow-xl max-w-2xl w-full border border-green-500"><h3 class="text-2xl font-semibold text-green-400 mb-4">🏅 Ranking de Magnatas</h3><div class="max-h-[60vh] overflow-y-auto"><table class="w-full text-left"><thead><tr class="border-b border-gray-600"><th class="p-3">Pos.</th><th class="p-3">Jogador</th><th class="p-3 text-right">Fortuna Máxima</th></tr></thead><tbody id="leaderboardBody"></tbody></table></div><button id="closeLeaderboardButton" class="w-full mt-6 bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-4 rounded-md">Fechar</button></div></div>
+    <div id="achievementsModal" class="fixed inset-0 modal-overlay flex items-center justify-center p-4 z-40 hidden"><div class="bg-gray-800 p-6 rounded-lg shadow-xl max-w-2xl w-full border border-yellow-500"><h3 class="text-2xl font-semibold text-yellow-400 mb-4">🏆 Minhas Conquistas</h3><div id="achievementsContainer" class="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[60vh] overflow-y-auto pr-2"></div><button id="closeAchievementsButton" class="w-full mt-6 bg-yellow-600 hover:bg-yellow-700 text-white font-semibold py-2 px-4 rounded-md">Fechar</button></div></div>
+    <div id="advisorModal" class="fixed inset-0 modal-overlay flex items-center justify-center p-4 z-40 hidden"><div class="bg-gray-800 p-6 rounded-lg shadow-xl max-w-md w-full border border-yellow-500"><h3 class="text-2xl font-semibold text-yellow-400 mb-4 flex items-center"><span class="text-3xl mr-3">🦉</span> Conselho da Coruja Sábia</h3><div id="advisorSpinner" class="flex justify-center items-center h-24 hidden"><svg class="animate-spin h-8 w-8 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg></div><p id="advisorResponse" class="text-gray-200 mb-4 whitespace-pre-wrap"></p><button id="closeAdvisorButton" class="w-full mt-4 bg-yellow-600 hover:bg-yellow-700 text-white font-semibold py-2 px-4 rounded-md">Obrigado, Coruja!</button></div></div>
+    <div id="messageBox" class="fixed inset-0 modal-overlay flex items-center justify-center p-4 z-40 hidden"><div class="bg-gray-800 p-6 rounded-lg shadow-xl max-w-sm w-full border border-blue-500"><p id="messageText" class="text-gray-200 mb-4"></p><button id="messageOkButton" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-md">OK</button></div></div>
+    <div id="nameInputModal" class="fixed inset-0 modal-overlay flex items-center justify-center p-4 z-40 hidden"><div class="bg-gray-800 p-6 rounded-lg shadow-xl max-w-sm w-full border border-purple-500"><h3 class="text-xl font-semibold text-purple-400 mb-4">Alterar Nome</h3><input type="text" id="newNameInput" class="w-full p-2 border border-gray-600 rounded-md bg-gray-700 text-white mb-4"><div class="flex space-x-2"><button id="saveNameButton" class="flex-1 bg-purple-600 hover:bg-purple-700 text-white font-semibold py-2 px-4 rounded-md">Salvar</button><button id="cancelNameButton" class="flex-1 bg-gray-600 hover:bg-gray-700 text-white font-semibold py-2 px-4 rounded-md">Cancelar</button></div></div></div>
+    <div id="confirmBox" class="fixed inset-0 modal-overlay flex items-center justify-center p-4 z-40 hidden"><div class="bg-gray-800 p-6 rounded-lg shadow-xl max-w-sm w-full border border-yellow-500"><p id="confirmText" class="text-gray-200 mb-4"></p><div class="flex space-x-2"><button id="confirmYesButton" class="flex-1 bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-4 rounded-md">Sim</button><button id="confirmNoButton" class="flex-1 bg-gray-600 hover:bg-gray-700 text-white font-semibold py-2 px-4 rounded-md">Não</button></div></div></div>
+</body>
+</html>
+�
