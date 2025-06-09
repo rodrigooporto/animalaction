@@ -1,5 +1,7 @@
 🦎 Bichos S.A. - Magnata do Mercado
+
 Bem-vindo ao mundo selvagem dos negócios!
+
 Em Bichos S.A. - Magnata do Mercado, você assume o papel de um investidor audacioso em um mercado comandado pelas criaturas mais carismáticas e excêntricas da natureza! 📈🦝📉
 
 Monte sua carteira, acompanhe as oscilações da bolsa da bicharada e tome decisões rápidas em um ambiente repleto de surpresas, notícias malucas e empresas únicas como a Esquilo Biscoiteiro S.A., rainha dos biscoitos de noz!
