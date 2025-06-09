@@ -22,3 +22,5 @@ Professores e educadores que querem introduzir conceitos de economia e investime
 
 🎮 Prepare-se para rugir nas finanças!
 Seu trono de magnata o aguarda... em Bichos S.A.! 🦁💼
+
+Acesse: https://rodrigooporto.github.io/animalaction/
